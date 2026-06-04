@@ -142,24 +142,24 @@ func TestValidatePostFormRequest(t *testing.T) {
 }
 
 func TestValidatePostJsonRequest(t *testing.T) {
-	body := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\",\"behaviour\":\"love\"}")
+	body := []byte(`{"name":"martins","saviour":"jesus","behaviour":"love"}`)
 	req := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	missingFieldBody := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\"}")
+	missingFieldBody := []byte(`{"name":"martins","saviour":"jesus"}`)
 	missingFieldReq := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(missingFieldBody))
 	missingFieldReq.Header.Set("Content-Type", "application/json")
 
-	// Case A - GAP-04 regression: JSON body where count is float64 after
-	// json.Unmarshal - would have panicked in v1.
-	countBody := []byte("{\"count\": 5}")
+	// Case A — GAP-04 regression: JSON body where count is float64 after
+	// json.Unmarshal — would have panicked in v1.
+	countBody := []byte(`{"count": 5}`)
 	gapRegressionReq := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(countBody))
 	gapRegressionReq.Header.Set("Content-Type", "application/json")
 
-	// Case B - double body-validator replay: confirms r.Body is correctly
+	// Case B — double body-validator replay: confirms r.Body is correctly
 	// replayed after the first schema reads it, so the second schema can
 	// still read the body.
-	twoFieldBody := []byte("{\"name\":\"martins\",\"email\":\"test@example.com\"}")
+	twoFieldBody := []byte(`{"name":"martins","email":"test@example.com"}`)
 	twoFieldReq := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(twoFieldBody))
 	twoFieldReq.Header.Set("Content-Type", "application/json")
 
