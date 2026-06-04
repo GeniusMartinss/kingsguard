@@ -10,24 +10,9 @@ import (
 )
 
 func TestValidateGetRequest(t *testing.T) {
-	validName := Lannister{
-		"name",
-		true,
-		"string",
-		"",
-		-1,
-		10,
-		"query",
-	}
-	validSaviour := Lannister{
-		"saviour",
-		true,
-		"string",
-		"jesus",
-		-1,
-		10,
-		"query",
-	}
+	validName := Field("name").Required().Type("string").Max(10).In("query")
+	validSaviour := Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("query")
+
 	getRequestWithCorrectQueryParams := httptest.NewRequest("GET", "http://google.com?name=martins&saviour=jesus", nil)
 	getInvalidRequestWithWrongRegexQueryParams := httptest.NewRequest("GET", "http://google.com?name=martins&saviour=anyoneelse", nil)
 	getRequestWithMissingQueryParams := httptest.NewRequest("GET", "http://google.com", nil)
@@ -35,13 +20,13 @@ func TestValidateGetRequest(t *testing.T) {
 
 	cases := []struct {
 		request *http.Request
-		schemas []Lannister
+		schemas []*FieldValidator
 		want    bool
 	}{
-		{getRequestWithCorrectQueryParams, []Lannister{validName, validSaviour}, true},
-		{getInvalidRequestWithWrongRegexQueryParams, []Lannister{validName, validSaviour}, false},
-		{getRequestWithMissingQueryParams, []Lannister{validName, validSaviour}, false},
-		{getInvalidRequestWithLongQueryParams, []Lannister{validName, validSaviour}, false},
+		{getRequestWithCorrectQueryParams, []*FieldValidator{validName, validSaviour}, true},
+		{getInvalidRequestWithWrongRegexQueryParams, []*FieldValidator{validName, validSaviour}, false},
+		{getRequestWithMissingQueryParams, []*FieldValidator{validName, validSaviour}, false},
+		{getInvalidRequestWithLongQueryParams, []*FieldValidator{validName, validSaviour}, false},
 	}
 
 	for _, c := range cases {
@@ -53,33 +38,9 @@ func TestValidateGetRequest(t *testing.T) {
 }
 
 func TestValidatePostRequest(t *testing.T) {
-	validName := Lannister{
-		"name",
-		true,
-		"string",
-		"",
-		4,
-		10,
-		"body",
-	}
-	validSaviour := Lannister{
-		"saviour",
-		true,
-		"string",
-		"jesus",
-		-1,
-		10,
-		"body",
-	}
-	validBehaviour := Lannister{
-		"behaviour",
-		true,
-		"string",
-		"love",
-		3,
-		10,
-		"body",
-	}
+	validName := Field("name").Required().Type("string").Min(4).Max(10).In("body")
+	validSaviour := Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("body")
+	validBehaviour := Field("behaviour").Required().Type("string").Regexp("love").Min(3).Max(10).In("body")
 
 	goodForm := url.Values{}
 	goodForm.Set("name", "martins")
@@ -99,11 +60,11 @@ func TestValidatePostRequest(t *testing.T) {
 
 	cases := []struct {
 		request *http.Request
-		schemas []Lannister
+		schemas []*FieldValidator
 		want    bool
 	}{
-		{postBadRequestWithMinLength, []Lannister{validName, validSaviour, validBehaviour}, false},
-		{postValidRequest, []Lannister{validName, validSaviour, validBehaviour}, true},
+		{postBadRequestWithMinLength, []*FieldValidator{validName, validSaviour, validBehaviour}, false},
+		{postValidRequest, []*FieldValidator{validName, validSaviour, validBehaviour}, true},
 	}
 
 	for _, c := range cases {
@@ -112,53 +73,28 @@ func TestValidatePostRequest(t *testing.T) {
 			t.Errorf("Validate(%v) got %v, want %t", c.schemas, got, c.want)
 		}
 	}
-
 }
 
 func TestValidateJsonPostRequest(t *testing.T) {
-	validName := Lannister{
-		"name",
-		true,
-		"string",
-		"",
-		4,
-		10,
-		"body",
-	}
-	validSaviour := Lannister{
-		"saviour",
-		true,
-		"string",
-		"jesus",
-		-1,
-		10,
-		"body",
-	}
-	validBehaviour := Lannister{
-		"behaviour",
-		true,
-		"string",
-		"love",
-		3,
-		10,
-		"body",
-	}
+	validName := Field("name").Required().Type("string").Min(4).Max(10).In("body")
+	validSaviour := Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("body")
+	validBehaviour := Field("behaviour").Required().Type("string").Regexp("love").Min(3).Max(10).In("body")
 
-	validPostJson := []byte(`{"name":"martins","saviour":"jesus","behaviour":"love"}`)
+	validPostJson := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\",\"behaviour\":\"love\"}")
 	postValidRequest := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(validPostJson))
 	postValidRequest.Header.Set("Content-Type", "application/json")
 
-	invalidPostJsonWithMissingField := []byte(`{"name":"martins","saviour":"jesus"}`)
+	invalidPostJsonWithMissingField := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\"}")
 	postInavlidValidRequest := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(invalidPostJsonWithMissingField))
 	postInavlidValidRequest.Header.Set("Content-Type", "application/json")
 
 	cases := []struct {
 		request *http.Request
-		schemas []Lannister
+		schemas []*FieldValidator
 		want    bool
 	}{
-		{postValidRequest, []Lannister{validName, validSaviour, validBehaviour}, true},
-		{postInavlidValidRequest, []Lannister{validName, validSaviour, validBehaviour}, false},
+		{postValidRequest, []*FieldValidator{validName, validSaviour, validBehaviour}, true},
+		{postInavlidValidRequest, []*FieldValidator{validName, validSaviour, validBehaviour}, false},
 	}
 
 	for _, c := range cases {
@@ -167,5 +103,4 @@ func TestValidateJsonPostRequest(t *testing.T) {
 			t.Errorf("Validate(%v) got %v, want %t", c.schemas, got, c.want)
 		}
 	}
-
 }
