@@ -86,8 +86,8 @@ func ValidateRequest(r *http.Request, schemas ...*FieldValidator) (bool, error) 
 				return true, nil
 			}
 		}
-		if !isDataTypeCorrect(r, schema) {
-			return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+		if ok, err := isDataTypeCorrect(r, schema); !ok {
+			return false, err
 		}
 		if schema.regexpPattern != "" {
 			if !isRegexMatching(r, schema) {
@@ -151,86 +151,117 @@ func isrequiredFieldPresent(r *http.Request, field string, paramType string) boo
 	return true
 }
 
-func isDataTypeCorrect(r *http.Request, schema *FieldValidator) bool {
+// isDataTypeCorrect checks that the value for schema.fieldName in the request
+// matches the declared schema.datatype. It returns (false, error) on type
+// mismatch and (true, nil) when the value is valid.
+//
+// For JSON bodies, json.Unmarshal decodes all JSON numbers as float64 — so both
+// "int" and "float" validations accept a float64 Go value as a valid representation.
+func isDataTypeCorrect(r *http.Request, schema *FieldValidator) (bool, error) {
 	switch schema.paramType {
 	case "query":
 		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
-			return false
-		} else {
-			switch schema.datatype {
-			case "int":
-				if _, err := strconv.ParseInt(val[0], 10, 64); err != nil {
-					return false
-				}
-			case "bool":
-				if _, err := strconv.ParseBool(val[0]); err != nil {
-					return false
-				}
-			case "float":
-				if _, err := strconv.ParseFloat(val[0], 64); err != nil {
-					return false
-				}
-			case "string":
-				return true
-			}
+			return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 		}
+		switch schema.datatype {
+		case "int":
+			if _, err := strconv.ParseInt(val[0], 10, 64); err != nil {
+				return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+			}
+		case "bool":
+			if _, err := strconv.ParseBool(val[0]); err != nil {
+				return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+			}
+		case "float":
+			if _, err := strconv.ParseFloat(val[0], 64); err != nil {
+				return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+			}
+		case "string":
+			return true, nil
+		}
+
 	case "body":
 		buf, err := readBody(r)
 		if err != nil {
-			return false
+			return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 		}
 		bodyData := io.NopCloser(bytes.NewBuffer(buf))
 		switch r.Header.Get("Content-type") {
 		case "application/json":
 			requestBody := make(map[string]interface{})
 			if err := json.NewDecoder(bodyData).Decode(&requestBody); err != nil {
-				return false
+				return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 			}
 			val := requestBody[schema.fieldName]
 
-			if val.(string) == "" {
-				return false
-			} else {
-				switch schema.datatype {
-				case "int":
+			// Guard against absent keys: a nil value must not reach the type switch.
+			if val == nil {
+				return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+			}
+
+			switch schema.datatype {
+			case "string":
+				if _, ok := val.(string); !ok {
+					return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+				}
+			case "int":
+				switch val.(type) {
+				case float64:
+					// json.Unmarshal decodes all JSON numbers as float64 — accept as valid int representation.
+				case string:
 					if _, err := strconv.ParseInt(val.(string), 10, 64); err != nil {
-						return false
+						return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 					}
-				case "bool":
-					if _, err := strconv.ParseBool(val.(string)); err != nil {
-						return false
-					}
-				case "float":
+				default:
+					return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+				}
+			case "float":
+				switch val.(type) {
+				case float64:
+					// already the correct Go type for JSON numbers.
+				case string:
 					if _, err := strconv.ParseFloat(val.(string), 64); err != nil {
-						return false
+						return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 					}
-				case "string":
-					return true
+				default:
+					return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+				}
+			case "bool":
+				switch val.(type) {
+				case bool:
+					// already correct Go type for JSON booleans.
+				case string:
+					if _, err := strconv.ParseBool(val.(string)); err != nil {
+						return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
+					}
+				default:
+					return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 				}
 			}
+
 		default:
 			if value := r.FormValue(schema.fieldName); len(value) > 0 {
 				switch schema.datatype {
 				case "int":
 					if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-						return false
+						return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 					}
 				case "bool":
 					if _, err := strconv.ParseBool(value); err != nil {
-						return false
+						return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 					}
 				case "float":
 					if _, err := strconv.ParseFloat(value, 64); err != nil {
-						return false
+						return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 					}
 				case "string":
-					return true
+					return true, nil
 				}
 			}
 		}
 	}
-	return true
+	return true, nil
 }
 
 func isRegexMatching(r *http.Request, schema *FieldValidator) bool {
@@ -243,10 +274,9 @@ func isRegexMatching(r *http.Request, schema *FieldValidator) bool {
 		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
 			return false
-		} else {
-			if !exp.MatchString(val[0]) {
-				return false
-			}
+		}
+		if !exp.MatchString(val[0]) {
+			return false
 		}
 	case "body":
 		buf, err := readBody(r)
@@ -261,12 +291,13 @@ func isRegexMatching(r *http.Request, schema *FieldValidator) bool {
 				return false
 			}
 			val := requestBody[schema.fieldName]
-			if val == "" {
+			if val == nil {
 				return false
-			} else {
-				if !exp.MatchString(val.(string)) {
-					return false
-				}
+			}
+			// Use fmt.Sprintf("%v", val) for safe string coercion — avoids panic on
+			// non-string types (float64, bool, etc.) that json.Unmarshal may produce.
+			if !exp.MatchString(fmt.Sprintf("%v", val)) {
+				return false
 			}
 		default:
 			if value := r.FormValue(schema.fieldName); !exp.MatchString(value) {
@@ -283,15 +314,14 @@ func isMinCorrect(r *http.Request, schema *FieldValidator) bool {
 		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
 			return false
-		} else {
-			if schema.datatype == "string" {
-				if len(val[0]) < schema.min {
-					return false
-				}
-			} else if schema.datatype == "int" {
-				if value, _ := strconv.ParseInt(val[0], 10, 64); int(value) < schema.min {
-					return false
-				}
+		}
+		if schema.datatype == "string" {
+			if len(val[0]) < schema.min {
+				return false
+			}
+		} else if schema.datatype == "int" {
+			if value, _ := strconv.ParseInt(val[0], 10, 64); int(value) < schema.min {
+				return false
 			}
 		}
 	case "body":
@@ -307,15 +337,23 @@ func isMinCorrect(r *http.Request, schema *FieldValidator) bool {
 				return false
 			}
 			val := requestBody[schema.fieldName]
-			if val == "" {
+			if val == nil {
 				return false
-			} else {
-				if schema.datatype == "string" {
-					if len(val.(string)) < schema.min {
+			}
+			if schema.datatype == "string" {
+				// Use fmt.Sprintf("%v", val) for safe string coercion.
+				if len(fmt.Sprintf("%v", val)) < schema.min {
+					return false
+				}
+			} else if schema.datatype == "int" {
+				// json.Unmarshal produces float64 for JSON numbers; compare directly.
+				switch v := val.(type) {
+				case float64:
+					if int(v) < schema.min {
 						return false
 					}
-				} else if schema.datatype == "int" {
-					if value, _ := strconv.ParseInt(val.(string), 10, 64); int(value) < schema.min {
+				case string:
+					if value, _ := strconv.ParseInt(v, 10, 64); int(value) < schema.min {
 						return false
 					}
 				}
@@ -341,15 +379,14 @@ func isMaxCorrect(r *http.Request, schema *FieldValidator) bool {
 		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
 			return false
-		} else {
-			if schema.datatype == "string" {
-				if len(val[0]) > schema.max {
-					return false
-				}
-			} else if schema.datatype == "int" {
-				if value, _ := strconv.ParseInt(val[0], 10, 64); int(value) > schema.max {
-					return false
-				}
+		}
+		if schema.datatype == "string" {
+			if len(val[0]) > schema.max {
+				return false
+			}
+		} else if schema.datatype == "int" {
+			if value, _ := strconv.ParseInt(val[0], 10, 64); int(value) > schema.max {
+				return false
 			}
 		}
 	case "body":
@@ -365,15 +402,23 @@ func isMaxCorrect(r *http.Request, schema *FieldValidator) bool {
 				return false
 			}
 			val := requestBody[schema.fieldName]
-			if val == "" {
+			if val == nil {
 				return false
-			} else {
-				if schema.datatype == "string" {
-					if len(val.(string)) > schema.max {
+			}
+			if schema.datatype == "string" {
+				// Use fmt.Sprintf("%v", val) for safe string coercion.
+				if len(fmt.Sprintf("%v", val)) > schema.max {
+					return false
+				}
+			} else if schema.datatype == "int" {
+				// json.Unmarshal produces float64 for JSON numbers; compare directly.
+				switch v := val.(type) {
+				case float64:
+					if int(v) > schema.max {
 						return false
 					}
-				} else if schema.datatype == "int" {
-					if value, _ := strconv.ParseInt(val.(string), 10, 64); int(value) > schema.max {
+				case string:
+					if value, _ := strconv.ParseInt(v, 10, 64); int(value) > schema.max {
 						return false
 					}
 				}
