@@ -11,9 +11,6 @@ import (
 )
 
 func TestValidateGetRequest(t *testing.T) {
-	validName := Field("name").Required().Type("string").Max(10).In("query")
-	validSaviour := Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("query")
-
 	getRequestWithCorrectQueryParams := httptest.NewRequest("GET", "http://google.com?name=martins&saviour=jesus", nil)
 	getInvalidRequestWithWrongRegexQueryParams := httptest.NewRequest("GET", "http://google.com?name=martins&saviour=anyoneelse", nil)
 	getRequestWithMissingQueryParams := httptest.NewRequest("GET", "http://google.com", nil)
@@ -23,85 +20,207 @@ func TestValidateGetRequest(t *testing.T) {
 		request *http.Request
 		schemas []*FieldValidator
 		want    bool
+		wantErr string // empty string means no error expected
 	}{
-		{getRequestWithCorrectQueryParams, []*FieldValidator{validName, validSaviour}, true},
-		{getInvalidRequestWithWrongRegexQueryParams, []*FieldValidator{validName, validSaviour}, false},
-		{getRequestWithMissingQueryParams, []*FieldValidator{validName, validSaviour}, false},
-		{getInvalidRequestWithLongQueryParams, []*FieldValidator{validName, validSaviour}, false},
+		{
+			request: getRequestWithCorrectQueryParams,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").Max(10).In("query"),
+				Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("query"),
+			},
+			want:    true,
+			wantErr: "",
+		},
+		{
+			request: getInvalidRequestWithWrongRegexQueryParams,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").Max(10).In("query"),
+				Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("query"),
+			},
+			want:    false,
+			wantErr: "saviour does not match required pattern",
+		},
+		{
+			request: getRequestWithMissingQueryParams,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").Max(10).In("query"),
+				Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("query"),
+			},
+			want:    false,
+			wantErr: "name is a required field",
+		},
+		{
+			request: getInvalidRequestWithLongQueryParams,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").Max(10).In("query"),
+				Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("query"),
+			},
+			want:    false,
+			wantErr: "the maximum accepted length/value for name is 10",
+		},
 	}
 
 	for _, c := range cases {
-		got, _ := ValidateRequest(c.request, c.schemas...)
+		got, err := ValidateRequest(c.request, c.schemas...)
 		if got != c.want {
-			t.Errorf("Validate(%v) got %v, want %t", c.schemas, got, c.want)
+			t.Errorf("ValidateRequest() got %v, want %v", got, c.want)
+		}
+		if !c.want {
+			if err == nil {
+				t.Errorf("ValidateRequest() expected error %q, got nil", c.wantErr)
+			} else if err.Error() != c.wantErr {
+				t.Errorf("ValidateRequest() error = %q, wantErr %q", err.Error(), c.wantErr)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("ValidateRequest() unexpected error: %v", err)
+			}
 		}
 	}
 }
 
-func TestValidatePostRequest(t *testing.T) {
-	validName := Field("name").Required().Type("string").Min(4).Max(10).In("body")
-	validSaviour := Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("body")
-	validBehaviour := Field("behaviour").Required().Type("string").Regexp("love").Min(3).Max(10).In("body")
-
-	goodForm := url.Values{}
-	goodForm.Set("name", "martins")
-	goodForm.Add("saviour", "jesus")
-	goodForm.Add("behaviour", "love")
-
-	postValidRequest := httptest.NewRequest("POST", "http://google.com", strings.NewReader(goodForm.Encode()))
-	postValidRequest.PostForm = goodForm
+func TestValidatePostFormRequest(t *testing.T) {
+	form := url.Values{}
+	form.Set("name", "martins")
+	form.Add("saviour", "jesus")
+	form.Add("behaviour", "love")
+	req := httptest.NewRequest("POST", "http://google.com", strings.NewReader(form.Encode()))
+	req.PostForm = form
 
 	badForm := url.Values{}
 	badForm.Set("name", "mar")
 	badForm.Add("saviour", "jesus")
 	badForm.Add("behaviour", "love")
-
-	postBadRequestWithMinLength := httptest.NewRequest("POST", "http://google.com", strings.NewReader(badForm.Encode()))
-	postBadRequestWithMinLength.PostForm = badForm
+	badReq := httptest.NewRequest("POST", "http://google.com", strings.NewReader(badForm.Encode()))
+	badReq.PostForm = badForm
 
 	cases := []struct {
 		request *http.Request
 		schemas []*FieldValidator
 		want    bool
+		wantErr string // empty string means no error expected
 	}{
-		{postBadRequestWithMinLength, []*FieldValidator{validName, validSaviour, validBehaviour}, false},
-		{postValidRequest, []*FieldValidator{validName, validSaviour, validBehaviour}, true},
+		{
+			request: badReq,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").Min(4).Max(10).In("body"),
+				Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("body"),
+				Field("behaviour").Required().Type("string").Regexp("love").In("body"),
+			},
+			want:    false,
+			wantErr: "the minimum accepted length/value for name is 4",
+		},
+		{
+			request: req,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").Min(4).Max(10).In("body"),
+				Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("body"),
+				Field("behaviour").Required().Type("string").Regexp("love").In("body"),
+			},
+			want:    true,
+			wantErr: "",
+		},
 	}
 
 	for _, c := range cases {
-		got, _ := ValidateRequest(c.request, c.schemas...)
+		got, err := ValidateRequest(c.request, c.schemas...)
 		if got != c.want {
-			t.Errorf("Validate(%v) got %v, want %t", c.schemas, got, c.want)
+			t.Errorf("ValidateRequest() got %v, want %v", got, c.want)
+		}
+		if !c.want {
+			if err == nil {
+				t.Errorf("ValidateRequest() expected error %q, got nil", c.wantErr)
+			} else if err.Error() != c.wantErr {
+				t.Errorf("ValidateRequest() error = %q, wantErr %q", err.Error(), c.wantErr)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("ValidateRequest() unexpected error: %v", err)
+			}
 		}
 	}
 }
 
-func TestValidateJsonPostRequest(t *testing.T) {
-	validName := Field("name").Required().Type("string").Min(4).Max(10).In("body")
-	validSaviour := Field("saviour").Required().Type("string").Regexp("jesus").Max(10).In("body")
-	validBehaviour := Field("behaviour").Required().Type("string").Regexp("love").Min(3).Max(10).In("body")
+func TestValidatePostJsonRequest(t *testing.T) {
+	body := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\",\"behaviour\":\"love\"}")
+	req := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
 
-	validPostJson := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\",\"behaviour\":\"love\"}")
-	postValidRequest := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(validPostJson))
-	postValidRequest.Header.Set("Content-Type", "application/json")
+	missingFieldBody := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\"}")
+	missingFieldReq := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(missingFieldBody))
+	missingFieldReq.Header.Set("Content-Type", "application/json")
 
-	invalidPostJsonWithMissingField := []byte("{\"name\":\"martins\",\"saviour\":\"jesus\"}")
-	postInavlidValidRequest := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(invalidPostJsonWithMissingField))
-	postInavlidValidRequest.Header.Set("Content-Type", "application/json")
+	// Case A - GAP-04 regression: JSON body where count is float64 after
+	// json.Unmarshal - would have panicked in v1.
+	countBody := []byte("{\"count\": 5}")
+	gapRegressionReq := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(countBody))
+	gapRegressionReq.Header.Set("Content-Type", "application/json")
+
+	// Case B - double body-validator replay: confirms r.Body is correctly
+	// replayed after the first schema reads it, so the second schema can
+	// still read the body.
+	twoFieldBody := []byte("{\"name\":\"martins\",\"email\":\"test@example.com\"}")
+	twoFieldReq := httptest.NewRequest("POST", "http://google.com", bytes.NewBuffer(twoFieldBody))
+	twoFieldReq.Header.Set("Content-Type", "application/json")
 
 	cases := []struct {
 		request *http.Request
 		schemas []*FieldValidator
 		want    bool
+		wantErr string // empty string means no error expected
 	}{
-		{postValidRequest, []*FieldValidator{validName, validSaviour, validBehaviour}, true},
-		{postInavlidValidRequest, []*FieldValidator{validName, validSaviour, validBehaviour}, false},
+		{
+			request: req,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").In("body"),
+				Field("saviour").Required().Type("string").Regexp("jesus").In("body"),
+				Field("behaviour").Required().Type("string").Regexp("love").In("body"),
+			},
+			want:    true,
+			wantErr: "",
+		},
+		{
+			request: missingFieldReq,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").In("body"),
+				Field("saviour").Required().Type("string").Regexp("jesus").In("body"),
+				Field("behaviour").Required().Type("string").Regexp("love").In("body"),
+			},
+			want:    false,
+			wantErr: "behaviour is a required field",
+		},
+		{
+			request: gapRegressionReq,
+			schemas: []*FieldValidator{Field("count").Required().Type("string").In("body")},
+			want:    false,
+			wantErr: "count must be of type string",
+		},
+		{
+			request: twoFieldReq,
+			schemas: []*FieldValidator{
+				Field("name").Required().Type("string").In("body"),
+				Field("email").Required().Type("string").In("body"),
+			},
+			want:    true,
+			wantErr: "",
+		},
 	}
 
 	for _, c := range cases {
-		got, _ := ValidateRequest(c.request, c.schemas...)
+		got, err := ValidateRequest(c.request, c.schemas...)
 		if got != c.want {
-			t.Errorf("Validate(%v) got %v, want %t", c.schemas, got, c.want)
+			t.Errorf("ValidateRequest() got %v, want %v", got, c.want)
+		}
+		if !c.want {
+			if err == nil {
+				t.Errorf("ValidateRequest() expected error %q, got nil", c.wantErr)
+			} else if err.Error() != c.wantErr {
+				t.Errorf("ValidateRequest() error = %q, wantErr %q", err.Error(), c.wantErr)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("ValidateRequest() unexpected error: %v", err)
+			}
 		}
 	}
 }
