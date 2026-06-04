@@ -8,50 +8,100 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
-type Lannister struct {
-	Field     string
-	Required  bool
-	Datatype  string
-	Regexp    string
-	Min int
-	Max int
-	ParamType string
+// FieldValidator is a fluent builder for describing a single request-field validation rule.
+// Use the Field constructor to create an instance and the chainable methods to configure it.
+type FieldValidator struct {
+	fieldName     string
+	required      bool
+	datatype      string
+	regexpPattern string
+	min           int
+	max           int
+	paramType     string
 }
 
-// ValidateRequest validates an incoming request that it matches a specified schema
-// it takes in a http request and an array of scehmas of the form lannisters
-// it returns a boolean true if the request is valid. and false otherwise
-// it returns an error nil for valid requests and an appropriate error for bad requests
-func ValidateRequest(r *http.Request, schemas ...Lannister) (bool, error) {
+// Field creates a new FieldValidator for the named request field.
+// min and max are initialised to -1 (sentinel meaning "no limit applied") because
+// the Go zero value 0 would incorrectly activate min/max validation immediately.
+func Field(name string) *FieldValidator {
+	return &FieldValidator{
+		fieldName: name,
+		min:       -1,
+		max:       -1,
+	}
+}
+
+// Required marks the field as mandatory in the request.
+func (f *FieldValidator) Required() *FieldValidator {
+	f.required = true
+	return f
+}
+
+// Type sets the expected data type for the field value.
+// The type string is normalised to lower-case so that e.g. "Float" and "float" are equivalent.
+func (f *FieldValidator) Type(t string) *FieldValidator {
+	f.datatype = strings.ToLower(t)
+	return f
+}
+
+// Regexp sets a regular-expression pattern that the field value must match.
+func (f *FieldValidator) Regexp(pattern string) *FieldValidator {
+	f.regexpPattern = pattern
+	return f
+}
+
+// Min sets the minimum accepted length (for strings) or value (for ints).
+func (f *FieldValidator) Min(n int) *FieldValidator {
+	f.min = n
+	return f
+}
+
+// Max sets the maximum accepted length (for strings) or value (for ints).
+func (f *FieldValidator) Max(n int) *FieldValidator {
+	f.max = n
+	return f
+}
+
+// In sets where in the request the field should be looked up ("query" or "body").
+func (f *FieldValidator) In(paramType string) *FieldValidator {
+	f.paramType = paramType
+	return f
+}
+
+// ValidateRequest validates an incoming request against the provided field schemas.
+// It returns true and a nil error when the request is valid, or false and a descriptive
+// error when a validation rule is violated.
+func ValidateRequest(r *http.Request, schemas ...*FieldValidator) (bool, error) {
 	for _, schema := range schemas {
-		if schema.Required == true {
-			if !isrequiredFieldPresent(r, schema.Field, schema.ParamType) {
-				return false, fmt.Errorf("%s is a required field", schema.Field)
+		if schema.required == true {
+			if !isrequiredFieldPresent(r, schema.fieldName, schema.paramType) {
+				return false, fmt.Errorf("%s is a required field", schema.fieldName)
 			}
 		} else {
-			if !isrequiredFieldPresent(r, schema.Field, schema.ParamType) {
+			if !isrequiredFieldPresent(r, schema.fieldName, schema.paramType) {
 				//don't continue validation if field is not required and also not present in request
 				return true, nil
 			}
 		}
-		if !isDataTypeCorrect(r, &schema) {
-			return false, fmt.Errorf("%s must be of type %s", schema.Field, schema.Datatype)
+		if !isDataTypeCorrect(r, schema) {
+			return false, fmt.Errorf("%s must be of type %s", schema.fieldName, schema.datatype)
 		}
-		if schema.Regexp != "" {
-			if !isRegexMatching(r, &schema) {
-				return false, fmt.Errorf("%s does not match required pattern", schema.Field)
+		if schema.regexpPattern != "" {
+			if !isRegexMatching(r, schema) {
+				return false, fmt.Errorf("%s does not match required pattern", schema.fieldName)
 			}
 		}
-		if schema.Min != -1 && schema.Datatype != "bool" {
-			if !isMinCorrect(r, &schema) {
-				return false, fmt.Errorf("the minimum accepted length/value for %s is %d", schema.Field, schema.Min)
+		if schema.min != -1 && schema.datatype != "bool" {
+			if !isMinCorrect(r, schema) {
+				return false, fmt.Errorf("the minimum accepted length/value for %s is %d", schema.fieldName, schema.min)
 			}
 		}
-		if schema.Max != -1 && schema.Datatype != "bool" {
-			if !isMaxCorrect(r, &schema) {
-				return false, fmt.Errorf("the maximum accepted length/value for %s is %d", schema.Field, schema.Max)
+		if schema.max != -1 && schema.datatype != "bool" {
+			if !isMaxCorrect(r, schema) {
+				return false, fmt.Errorf("the maximum accepted length/value for %s is %d", schema.fieldName, schema.max)
 			}
 		}
 	}
@@ -88,14 +138,14 @@ func isrequiredFieldPresent(r *http.Request, field string, paramType string) boo
 	return true
 }
 
-func isDataTypeCorrect(r *http.Request, schema *Lannister) bool {
-	switch schema.ParamType {
+func isDataTypeCorrect(r *http.Request, schema *FieldValidator) bool {
+	switch schema.paramType {
 	case "query":
-		val, ok := r.URL.Query()[schema.Field]
+		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
 			return false
 		} else {
-			switch schema.Datatype {
+			switch schema.datatype {
 			case "int":
 				if _, err := strconv.ParseInt(val[0], 10, 64); err != nil {
 					return false
@@ -104,11 +154,11 @@ func isDataTypeCorrect(r *http.Request, schema *Lannister) bool {
 				if _, err := strconv.ParseBool(val[0]); err != nil {
 					return false
 				}
-			case "Float":
+			case "float":
 				if _, err := strconv.ParseFloat(val[0], 64); err != nil {
 					return false
 				}
-			case "String":
+			case "string":
 				return true
 			}
 		}
@@ -123,12 +173,12 @@ func isDataTypeCorrect(r *http.Request, schema *Lannister) bool {
 			if err := json.NewDecoder(bodyData).Decode(&requestBody); err != nil {
 				return false
 			}
-			val := requestBody[schema.Field]
+			val := requestBody[schema.fieldName]
 
 			if val.(string) == "" {
 				return false
 			} else {
-				switch schema.Datatype {
+				switch schema.datatype {
 				case "int":
 					if _, err := strconv.ParseInt(val.(string), 10, 64); err != nil {
 						return false
@@ -146,8 +196,8 @@ func isDataTypeCorrect(r *http.Request, schema *Lannister) bool {
 				}
 			}
 		default:
-			if value := r.FormValue(schema.Field); len(value) > 0 {
-				switch schema.Datatype {
+			if value := r.FormValue(schema.fieldName); len(value) > 0 {
+				switch schema.datatype {
 				case "int":
 					if _, err := strconv.ParseInt(value, 10, 64); err != nil {
 						return false
@@ -169,14 +219,14 @@ func isDataTypeCorrect(r *http.Request, schema *Lannister) bool {
 	return true
 }
 
-func isRegexMatching(r *http.Request, schema *Lannister) bool {
-	exp, err := regexp.Compile(schema.Regexp)
+func isRegexMatching(r *http.Request, schema *FieldValidator) bool {
+	exp, err := regexp.Compile(schema.regexpPattern)
 	if err != nil {
 		return false
 	}
-	switch schema.ParamType {
+	switch schema.paramType {
 	case "query":
-		val, ok := r.URL.Query()[schema.Field]
+		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
 			return false
 		} else {
@@ -195,7 +245,7 @@ func isRegexMatching(r *http.Request, schema *Lannister) bool {
 			if err := json.NewDecoder(bodyData).Decode(&requestBody); err != nil {
 				return false
 			}
-			val := requestBody[schema.Field]
+			val := requestBody[schema.fieldName]
 			if val == "" {
 				return false
 			} else {
@@ -204,7 +254,7 @@ func isRegexMatching(r *http.Request, schema *Lannister) bool {
 				}
 			}
 		default:
-			if value := r.FormValue(schema.Field); !exp.MatchString(value) {
+			if value := r.FormValue(schema.fieldName); !exp.MatchString(value) {
 				return false
 			}
 		}
@@ -212,23 +262,22 @@ func isRegexMatching(r *http.Request, schema *Lannister) bool {
 	return true
 }
 
-func isMinCorrect(r *http.Request, schema *Lannister) bool {
-	switch schema.ParamType {
+func isMinCorrect(r *http.Request, schema *FieldValidator) bool {
+	switch schema.paramType {
 	case "query":
-		val, ok := r.URL.Query()[schema.Field]
+		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
 			return false
 		} else {
-			if schema.Datatype == "string" {
-				if len(val[0]) < schema.Min {
+			if schema.datatype == "string" {
+				if len(val[0]) < schema.min {
 					return false
 				}
-			}else if schema.Datatype == "int"{
-				if value,_ := strconv.ParseInt(val[0], 10, 64); int(value) < schema.Min {
+			} else if schema.datatype == "int" {
+				if value, _ := strconv.ParseInt(val[0], 10, 64); int(value) < schema.min {
 					return false
 				}
 			}
-
 		}
 	case "body":
 		buf, _ := ioutil.ReadAll(r.Body)
@@ -241,53 +290,51 @@ func isMinCorrect(r *http.Request, schema *Lannister) bool {
 			if err := json.NewDecoder(bodyData).Decode(&requestBody); err != nil {
 				return false
 			}
-			val := requestBody[schema.Field]
+			val := requestBody[schema.fieldName]
 			if val == "" {
 				return false
 			} else {
-				if schema.Datatype == "string" {
-					if len(val.(string)) < schema.Min {
+				if schema.datatype == "string" {
+					if len(val.(string)) < schema.min {
 						return false
 					}
-				}else if schema.Datatype == "int"{
-					if value,_ := strconv.ParseInt(val.(string), 10, 64); int(value) < schema.Min {
+				} else if schema.datatype == "int" {
+					if value, _ := strconv.ParseInt(val.(string), 10, 64); int(value) < schema.min {
 						return false
 					}
 				}
 			}
 		default:
-			if schema.Datatype == "string" {
-				if value := r.FormValue(schema.Field); len(value) < schema.Min {
+			if schema.datatype == "string" {
+				if value := r.FormValue(schema.fieldName); len(value) < schema.min {
 					return false
 				}
-			}else if schema.Datatype == "int"{
-				if value,_ := strconv.ParseInt(r.FormValue(schema.Field), 10, 64); int(value) < schema.Min  {
+			} else if schema.datatype == "int" {
+				if value, _ := strconv.ParseInt(r.FormValue(schema.fieldName), 10, 64); int(value) < schema.min {
 					return false
 				}
 			}
-
 		}
 	}
 	return true
 }
 
-func isMaxCorrect(r *http.Request, schema *Lannister) bool {
-	switch schema.ParamType {
+func isMaxCorrect(r *http.Request, schema *FieldValidator) bool {
+	switch schema.paramType {
 	case "query":
-		val, ok := r.URL.Query()[schema.Field]
+		val, ok := r.URL.Query()[schema.fieldName]
 		if !ok {
 			return false
 		} else {
-			if schema.Datatype == "string" {
-				if len(val[0]) > schema.Max {
+			if schema.datatype == "string" {
+				if len(val[0]) > schema.max {
 					return false
 				}
-			}else if schema.Datatype == "int"{
-				if value,_ := strconv.ParseInt(val[0], 10, 64); int(value) > schema.Max {
+			} else if schema.datatype == "int" {
+				if value, _ := strconv.ParseInt(val[0], 10, 64); int(value) > schema.max {
 					return false
 				}
 			}
-
 		}
 	case "body":
 		buf, _ := ioutil.ReadAll(r.Body)
@@ -300,27 +347,27 @@ func isMaxCorrect(r *http.Request, schema *Lannister) bool {
 			if err := json.NewDecoder(bodyData).Decode(&requestBody); err != nil {
 				return false
 			}
-			val := requestBody[schema.Field]
+			val := requestBody[schema.fieldName]
 			if val == "" {
 				return false
 			} else {
-				if schema.Datatype == "string" {
-					if len(val.(string)) > schema.Max {
+				if schema.datatype == "string" {
+					if len(val.(string)) > schema.max {
 						return false
 					}
-				}else if schema.Datatype == "int"{
-					if value,_ := strconv.ParseInt(val.(string), 10, 64); int(value) > schema.Max {
+				} else if schema.datatype == "int" {
+					if value, _ := strconv.ParseInt(val.(string), 10, 64); int(value) > schema.max {
 						return false
 					}
 				}
 			}
 		default:
-			if schema.Datatype == "string" {
-				if value := r.FormValue(schema.Field); len(value) > schema.Max {
+			if schema.datatype == "string" {
+				if value := r.FormValue(schema.fieldName); len(value) > schema.max {
 					return false
 				}
-			}else if schema.Datatype == "int"{
-				if value,_ := strconv.ParseInt(r.FormValue(schema.Field), 10, 64); int(value) > schema.Max {
+			} else if schema.datatype == "int" {
+				if value, _ := strconv.ParseInt(r.FormValue(schema.fieldName), 10, 64); int(value) > schema.max {
 					return false
 				}
 			}
