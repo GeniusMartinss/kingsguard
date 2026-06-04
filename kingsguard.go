@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -76,7 +76,7 @@ func (f *FieldValidator) In(paramType string) *FieldValidator {
 // error when a validation rule is violated.
 func ValidateRequest(r *http.Request, schemas ...*FieldValidator) (bool, error) {
 	for _, schema := range schemas {
-		if schema.required == true {
+		if schema.required {
 			if !isrequiredFieldPresent(r, schema.fieldName, schema.paramType) {
 				return false, fmt.Errorf("%s is a required field", schema.fieldName)
 			}
@@ -109,6 +109,18 @@ func ValidateRequest(r *http.Request, schemas ...*FieldValidator) (bool, error) 
 	return true, nil
 }
 
+// readBody reads the entire request body, restores r.Body so subsequent reads
+// within the same ValidateRequest loop receive a non-empty stream, and returns
+// the raw bytes. Any read error is propagated to the caller.
+func readBody(r *http.Request) ([]byte, error) {
+	buf, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(buf))
+	return buf, nil
+}
+
 func isrequiredFieldPresent(r *http.Request, field string, paramType string) bool {
 	switch paramType {
 	case "query":
@@ -116,10 +128,11 @@ func isrequiredFieldPresent(r *http.Request, field string, paramType string) boo
 			return false
 		}
 	case "body":
-		buf, _ := ioutil.ReadAll(r.Body)
-		bodyData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		nextData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		r.Body = nextData
+		buf, err := readBody(r)
+		if err != nil {
+			return false
+		}
+		bodyData := io.NopCloser(bytes.NewBuffer(buf))
 		switch r.Header.Get("Content-type") {
 		case "application/json":
 			requestBody := make(map[string]interface{})
@@ -163,10 +176,11 @@ func isDataTypeCorrect(r *http.Request, schema *FieldValidator) bool {
 			}
 		}
 	case "body":
-		buf, _ := ioutil.ReadAll(r.Body)
-		bodyData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		nextData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		r.Body = nextData
+		buf, err := readBody(r)
+		if err != nil {
+			return false
+		}
+		bodyData := io.NopCloser(bytes.NewBuffer(buf))
 		switch r.Header.Get("Content-type") {
 		case "application/json":
 			requestBody := make(map[string]interface{})
@@ -235,10 +249,11 @@ func isRegexMatching(r *http.Request, schema *FieldValidator) bool {
 			}
 		}
 	case "body":
-		buf, _ := ioutil.ReadAll(r.Body)
-		bodyData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		nextData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		r.Body = nextData
+		buf, err := readBody(r)
+		if err != nil {
+			return false
+		}
+		bodyData := io.NopCloser(bytes.NewBuffer(buf))
 		switch r.Header.Get("Content-type") {
 		case "application/json":
 			requestBody := make(map[string]interface{})
@@ -280,10 +295,11 @@ func isMinCorrect(r *http.Request, schema *FieldValidator) bool {
 			}
 		}
 	case "body":
-		buf, _ := ioutil.ReadAll(r.Body)
-		bodyData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		nextData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		r.Body = nextData
+		buf, err := readBody(r)
+		if err != nil {
+			return false
+		}
+		bodyData := io.NopCloser(bytes.NewBuffer(buf))
 		switch r.Header.Get("Content-type") {
 		case "application/json":
 			requestBody := make(map[string]interface{})
@@ -337,10 +353,11 @@ func isMaxCorrect(r *http.Request, schema *FieldValidator) bool {
 			}
 		}
 	case "body":
-		buf, _ := ioutil.ReadAll(r.Body)
-		bodyData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		nextData := ioutil.NopCloser(bytes.NewBuffer(buf))
-		r.Body = nextData
+		buf, err := readBody(r)
+		if err != nil {
+			return false
+		}
+		bodyData := io.NopCloser(bytes.NewBuffer(buf))
 		switch r.Header.Get("Content-type") {
 		case "application/json":
 			requestBody := make(map[string]interface{})
